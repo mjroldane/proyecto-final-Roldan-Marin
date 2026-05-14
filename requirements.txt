@@ -1,7 +1,9 @@
-streamlit
-numpy
-Pillow
-tensorflow
-bokeh
-streamlit-bokeh-events
-gTTS
+# Smart Home AI v3.0 — Requirements
+# Instalar con: pip install -r requirements.txt
+ 
+streamlit>=1.32.0
+numpy>=1.24.0,<2.0.0
+Pillow>=10.0.0
+tensorflow>=2.13.0,<2.16.0
+tf-keras>=2.13.0
+gTTS>=2.4.0
