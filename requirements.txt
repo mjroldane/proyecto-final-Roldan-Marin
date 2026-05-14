@@ -1,1 +1,7 @@
-
+streamlit
+numpy
+Pillow
+tensorflow
+bokeh
+streamlit-bokeh-events
+gTTS
