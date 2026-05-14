@@ -1,7 +1,3 @@
-
-App · PY
-Copy
-
 import streamlit as st
 import numpy as np
 from PIL import Image, ImageOps
@@ -181,7 +177,7 @@ except Exception as e:
 # HEADER
 # =========================================================
  
-status_text = f"Modelo activo · {st.session_state.model_backend}" if st.session_state.model_loaded else "Modelo no cargado"
+status_text = f"Modelo activo | {st.session_state.model_backend}" if st.session_state.model_loaded else "Modelo no cargado"
  
 st.markdown(f"""
 <div class="app-header">
@@ -540,6 +536,7 @@ st.markdown("""
  
 st.markdown(f"""
 <div class="app-footer">
-    Python {platform.python_version()} &nbsp;·&nbsp; Smart Home AI v3.1
+    Python {platform.python_version()} &nbsp;|&nbsp; Smart Home AI v3.1
 </div>
 """, unsafe_allow_html=True)
+ 
