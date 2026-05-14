@@ -376,24 +376,6 @@ if img_file_buffer is not None:
             )
  
 # =========================================================
-# PROCESAR COMANDO DE VOZ (query param → session_state)
-# =========================================================
- 
-voz_cmd = st.query_params.get("voz", "")
-if voz_cmd:
-    st.query_params.clear()
-    if voz_cmd == "encender_cocina":
-        st.session_state.kitchen_light = True
-    elif voz_cmd == "apagar_cocina":
-        st.session_state.kitchen_light = False
-    elif voz_cmd == "abrir_puerta":
-        st.session_state.door_open = True
-    elif voz_cmd == "cerrar_puerta":
-        st.session_state.door_open = False
-        st.session_state.recognized_person = ""
-    st.rerun()
- 
-# =========================================================
 # CONTROL POR VOZ + MANUAL
 # =========================================================
  
@@ -407,9 +389,23 @@ st.markdown(
     unsafe_allow_html=True
 )
  
-# ── Bloque JS: Web Speech API (escucha) + speechSynthesis (confirma) + query param (ejecuta) ──
-# Flujo: usuario habla → se detecta el comando → speechSynthesis dice la confirmación
-#        → al terminar de hablar, redirige con ?voz=... → Streamlit hace rerun y aplica el cambio
+# Campo de texto oculto que recibe el comando desde el JS
+voz_input = st.text_input("cmd", value="", key="voz_cmd_input", label_visibility="collapsed")
+ 
+# Procesar el comando recibido desde JS
+if voz_input:
+    if voz_input == "encender_cocina":
+        st.session_state.kitchen_light = True
+    elif voz_input == "apagar_cocina":
+        st.session_state.kitchen_light = False
+    elif voz_input == "abrir_puerta":
+        st.session_state.door_open = True
+    elif voz_input == "cerrar_puerta":
+        st.session_state.door_open = False
+        st.session_state.recognized_person = ""
+    st.session_state.voz_cmd_input = ""
+    st.rerun()
+ 
 st.components.v1.html("""
 <style>
   #micBtn {
@@ -432,63 +428,97 @@ st.components.v1.html("""
     color: #64748B; font-size: 0.83rem;
     font-family: sans-serif; margin-top: 10px; min-height: 22px;
   }
+  #executeBtn {
+    background: linear-gradient(135deg, #059669, #047857);
+    color: white; border: none; border-radius: 12px;
+    padding: 12px 24px; font-size: 14px; font-weight: 600;
+    cursor: pointer; margin-left: 10px;
+    font-family: 'DM Sans', sans-serif;
+    display: none; align-items: center; gap: 8px;
+  }
+  #executeBtn.visible { display: inline-flex; }
 </style>
  
 <div style="display:flex; flex-direction:column; align-items:flex-start; gap:4px; padding:4px 0;">
-  <button id="micBtn" onclick="startListening()">
-    &#x1F3A4; Hablar
-  </button>
+  <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+    <button id="micBtn" onclick="startListening()">&#x1F3A4; Hablar</button>
+    <button id="executeBtn" onclick="ejecutarPendiente()">&#x25B6; Ejecutar comando</button>
+  </div>
   <span id="micStatus">Listo para escuchar</span>
 </div>
  
 <script>
-// ─── Mapa de comandos ───────────────────────────────────────────────────────
-// Cada entrada: frase detectada → { cmd: valor del query param, voz: texto que se dice }
 var COMMANDS = {
-  "encender cocina": { cmd: "encender_cocina", voz: "Encendiendo la luz de la cocina"  },
-  "apagar cocina":   { cmd: "apagar_cocina",   voz: "Apagando la luz de la cocina"     },
-  "abrir puerta":    { cmd: "abrir_puerta",    voz: "Abriendo la puerta principal"     },
-  "cerrar puerta":   { cmd: "cerrar_puerta",   voz: "Cerrando la puerta principal"     }
+  "encender cocina": { cmd: "encender_cocina", voz: "Encendiendo la luz de la cocina" },
+  "apagar cocina":   { cmd: "apagar_cocina",   voz: "Apagando la luz de la cocina"    },
+  "abrir puerta":    { cmd: "abrir_puerta",    voz: "Abriendo la puerta principal"    },
+  "cerrar puerta":   { cmd: "cerrar_puerta",   voz: "Cerrando la puerta principal"    }
 };
  
-// ─── Síntesis de voz del navegador ─────────────────────────────────────────
-// Habla el texto y llama a callback() al terminar (o tras un timeout de seguridad)
+var pendingCmd = null;
+ 
 function hablar(texto, callback) {
-  if (!('speechSynthesis' in window)) {
-    if (callback) callback();
-    return;
-  }
+  if (!('speechSynthesis' in window)) { if (callback) callback(); return; }
   window.speechSynthesis.cancel();
-  var utter  = new SpeechSynthesisUtterance(texto);
-  utter.lang  = 'es-ES';
-  utter.rate  = 1.05;
-  utter.pitch = 1.0;
- 
+  var utter = new SpeechSynthesisUtterance(texto);
+  utter.lang = 'es-ES'; utter.rate = 1.05; utter.pitch = 1.0;
   var done = false;
-  function finish() {
-    if (done) return;
-    done = true;
-    if (callback) callback();
-  }
- 
-  utter.onend = finish;
-  utter.onerror = finish;
-  // Timeout de seguridad: si onend no dispara en 4 s, continua de todos modos
+  function finish() { if (done) return; done = true; if (callback) callback(); }
+  utter.onend = finish; utter.onerror = finish;
   setTimeout(finish, Math.max(texto.length * 70, 2000));
   window.speechSynthesis.speak(utter);
 }
  
-// ─── Redirige con el comando para que Python lo procese ────────────────────
-function ejecutar(cmd) {
-  var url = new URL(window.parent.location.href);
-  url.searchParams.set('voz', cmd);
-  window.parent.location.href = url.toString();
+// Inyecta el comando en el st.text_input de Streamlit y dispara Enter
+function ejecutarComandoStreamlit(cmd) {
+  var inputs = window.parent.document.querySelectorAll('input[type="text"]');
+  var targetInput = null;
+  for (var i = 0; i < inputs.length; i++) {
+    if (inputs[i].value === "") {
+      targetInput = inputs[i];
+      break;
+    }
+  }
+  if (!targetInput && inputs.length > 0) {
+    targetInput = inputs[inputs.length - 1];
+  }
+  if (targetInput) {
+    var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.parent.HTMLInputElement.prototype, 'value'
+    ).set;
+    nativeInputValueSetter.call(targetInput, cmd);
+    targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+    setTimeout(function() {
+      targetInput.dispatchEvent(new KeyboardEvent('keydown',  { key: 'Enter', keyCode: 13, bubbles: true }));
+      targetInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', keyCode: 13, bubbles: true }));
+      targetInput.dispatchEvent(new KeyboardEvent('keyup',    { key: 'Enter', keyCode: 13, bubbles: true }));
+    }, 100);
+  } else {
+    // Fallback: query param
+    var url = new URL(window.parent.location.href);
+    url.searchParams.set('voz', cmd);
+    window.parent.location.href = url.toString();
+  }
 }
  
-// ─── Reconocimiento de voz ─────────────────────────────────────────────────
+function ejecutarPendiente() {
+  if (!pendingCmd) return;
+  var status  = document.getElementById('micStatus');
+  var execBtn = document.getElementById('executeBtn');
+  status.textContent = 'Ejecutando: ' + pendingCmd + '...';
+  status.style.color = '#FCD34D';
+  execBtn.classList.remove('visible');
+  var info = COMMANDS[pendingCmd];
+  hablar(info.voz, function() {
+    ejecutarComandoStreamlit(info.cmd);
+    pendingCmd = null;
+  });
+}
+ 
 function startListening() {
-  var btn    = document.getElementById('micBtn');
-  var status = document.getElementById('micStatus');
+  var btn     = document.getElementById('micBtn');
+  var status  = document.getElementById('micStatus');
+  var execBtn = document.getElementById('executeBtn');
  
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
     status.textContent = 'Necesitas Chrome para usar el microfono';
@@ -498,9 +528,7 @@ function startListening() {
  
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var r  = new SR();
-  r.lang           = 'es-ES';
-  r.continuous     = false;
-  r.interimResults = false;
+  r.lang = 'es-ES'; r.continuous = false; r.interimResults = false;
  
   btn.innerHTML = '&#x23F9; Escuchando...';
   btn.classList.add('listening');
@@ -514,24 +542,22 @@ function startListening() {
     status.textContent = 'Escuche: "' + text + '"';
     status.style.color = '#6EE7B7';
  
-    // Busca el comando mas largo que coincida (prioriza frases mas especificas)
-    var matched = null;
-    var maxLen  = 0;
+    var matched = null; var maxLen = 0;
     for (var frase in COMMANDS) {
       if (text.indexOf(frase) !== -1 && frase.length > maxLen) {
-        matched = frase;
-        maxLen  = frase.length;
+        matched = frase; maxLen = frase.length;
       }
     }
  
     if (matched) {
-      var info = COMMANDS[matched];
-      status.textContent = 'Ejecutando: ' + matched + '...';
+      pendingCmd = matched;
+      // Intenta ejecutar automaticamente
+      ejecutarPendiente();
+      // Si falla, el boton verde queda visible como respaldo
+      execBtn.textContent = '\u25B6 Ejecutar: ' + matched;
+      execBtn.classList.add('visible');
+      status.textContent = 'Comando: "' + matched + '" — ejecutando...';
       status.style.color = '#FCD34D';
-      // Primero habla la confirmacion, despues redirige para ejecutar el cambio
-      hablar(info.voz, function() {
-        ejecutar(info.cmd);
-      });
     } else {
       status.textContent = 'No reconoci ese comando: "' + text + '"';
       status.style.color = '#F59E0B';
@@ -547,7 +573,6 @@ function startListening() {
   };
  
   r.onend = function() {
-    // Solo resetea el boton si no hubo resultado (onresult ya lo hizo)
     if (btn.classList.contains('listening')) {
       btn.innerHTML = '&#x1F3A4; Hablar';
       btn.classList.remove('listening');
@@ -557,9 +582,9 @@ function startListening() {
   r.start();
 }
 </script>
-""", height=110)
+""", height=130)
  
-# -- Comandos disponibles --
+# Comandos disponibles
 st.markdown(
     '<p style="color:#475569; font-size:0.75rem; letter-spacing:1px; text-transform:uppercase; margin:1rem 0 0.6rem 0;">Comandos disponibles:</p>'
     '<div style="display:grid; grid-template-columns:repeat(2,1fr); gap:0.5rem; margin-bottom:1.2rem;">'
@@ -571,7 +596,7 @@ st.markdown(
     unsafe_allow_html=True
 )
  
-# -- Botones manuales como respaldo --
+# Botones manuales como respaldo
 st.markdown(
     '<p style="color:#475569; font-size:0.75rem; letter-spacing:1px; text-transform:uppercase; margin-bottom:0.5rem;">O usa los botones:</p>',
     unsafe_allow_html=True
@@ -602,7 +627,7 @@ with col4:
 # =========================================================
  
 st.markdown(
-    '<div class="app-footer">Python ' + platform.python_version() + ' | Smart Home AI v3.5</div>',
+    '<div class="app-footer">Python ' + platform.python_version() + ' | Smart Home AI v3.6</div>',
     unsafe_allow_html=True
 )
  
