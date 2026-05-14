@@ -2,8 +2,6 @@ import streamlit as st
 import numpy as np
 from PIL import Image, ImageOps
 import os
-import io
-import base64
 import platform
  
 # =========================================================
@@ -12,7 +10,7 @@ import platform
  
 st.set_page_config(
     page_title="Smart Home AI",
-    page_icon="casa",
+    page_icon="🏠",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -40,25 +38,6 @@ def load_my_model():
         return load_model(model_path, compile=False), "keras"
     except Exception as e:
         raise RuntimeError("No se pudo cargar el modelo: " + str(e))
- 
-# =========================================================
-# FUNCION DE VOZ
-# =========================================================
- 
-def generar_voz(texto):
-    try:
-        from gtts import gTTS
-        tts = gTTS(text=texto, lang='es')
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        fp.seek(0)
-        audio_b64 = base64.b64encode(fp.read()).decode()
-        st.markdown(
-            '<audio autoplay><source src="data:audio/mp3;base64,' + audio_b64 + '" type="audio/mp3"></audio>',
-            unsafe_allow_html=True
-        )
-    except Exception:
-        pass
  
 # =========================================================
 # ESTADOS
@@ -191,7 +170,7 @@ if model_error:
     st.error("No se pudo cargar el modelo. Verifica que keras_model.h5 este en la misma carpeta. " + model_error[:200])
  
 # =========================================================
-# ESTADO + VISTA DE PAJARO
+# ESTADO + VISTA DE PLANTA
 # =========================================================
  
 st.markdown('<p class="section-label">Estado de la residencia</p>', unsafe_allow_html=True)
@@ -237,9 +216,8 @@ with col_cards:
             unsafe_allow_html=True
         )
  
-# -- Vista de pajaro via st.components para que el SVG renderice correctamente --
+# -- Vista de planta SVG --
 with col_house:
-    # Valores que cambian segun estado
     door_color  = "#22C55E" if st.session_state.door_open else "#EF4444"
     door_label  = "ABIERTA" if st.session_state.door_open else "CERRADA"
  
@@ -345,7 +323,6 @@ with col_house:
 </div>
 """
  
-    # Sustituir placeholders con valores Python (sin f-string para evitar conflictos con llaves SVG)
     svg_html = svg_html.replace("DOORCOLOR",   door_color)
     svg_html = svg_html.replace("DOORLABEL",   door_label)
     svg_html = svg_html.replace("DOORSWING",   door_swing)
@@ -411,7 +388,7 @@ if img_file_buffer is not None:
             if st.session_state.recognized_person != persona_detectada:
                 st.session_state.door_open = True
                 st.session_state.recognized_person = persona_detectada
-                generar_voz("Bienvenida a casa " + persona_detectada + ". He abierto la puerta principal.")
+                # Retroalimentacion de voz eliminada
                 st.balloons()
                 st.rerun()
         else:
@@ -423,7 +400,7 @@ if img_file_buffer is not None:
             )
  
 # =========================================================
-# CONTROL MANUAL (reemplaza el control por voz)
+# CONTROL POR VOZ + MANUAL
 # =========================================================
  
 st.markdown("<br>", unsafe_allow_html=True)
@@ -431,36 +408,140 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
     '<div class="section-card">'
     '<div class="section-header"><span>&#x1F3AE;</span>'
-    '<p class="section-title">Control Manual</p>'
+    '<p class="section-title">Control</p>'
     '</div></div>',
+    unsafe_allow_html=True
+)
+ 
+# -- Microfono con Web Speech API --
+# El comando se pasa a Streamlit via query param y se procesa en Python.
+ 
+st.components.v1.html("""
+<div style="margin-bottom:10px; display:flex; align-items:center; gap:14px;">
+  <button id="micBtn" onclick="startListening()" style="
+      background:linear-gradient(135deg,#0EA5E9,#0284C7);
+      color:white; border:none; border-radius:12px;
+      padding:10px 22px; font-size:14px; font-weight:600;
+      cursor:pointer; transition:all 0.2s;">
+    &#x1F3A4; Hablar
+  </button>
+  <span id="micStatus" style="color:#64748B; font-size:0.82rem;"></span>
+</div>
+<script>
+var COMMANDS = {
+  "encender cocina": "encender_cocina",
+  "apagar cocina":   "apagar_cocina",
+  "abrir puerta":    "abrir_puerta",
+  "cerrar puerta":   "cerrar_puerta"
+};
+ 
+function startListening() {
+  var btn    = document.getElementById('micBtn');
+  var status = document.getElementById('micStatus');
+  if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    status.textContent = 'Usa Chrome para reconocimiento de voz';
+    status.style.color = '#EF4444'; return;
+  }
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var r = new SR();
+  r.lang = 'es-ES'; r.continuous = false; r.interimResults = false;
+  btn.textContent = '⏹ Escuchando...';
+  btn.style.background = 'linear-gradient(135deg,#DC2626,#991B1B)';
+  status.textContent = 'Habla ahora...'; status.style.color = '#38BDF8';
+ 
+  r.onresult = function(e) {
+    var text = e.results[0][0].transcript.toLowerCase().trim();
+    status.textContent = 'Detectado: ' + text; status.style.color = '#6EE7B7';
+    btn.textContent = '&#x1F3A4; Hablar';
+    btn.style.background = 'linear-gradient(135deg,#0EA5E9,#0284C7)';
+ 
+    var matched = null;
+    for (var cmd in COMMANDS) {
+      if (text.indexOf(cmd) !== -1) { matched = COMMANDS[cmd]; break; }
+    }
+    if (matched) {
+      var url = new URL(window.parent.location.href);
+      url.searchParams.set('voz', matched);
+      window.parent.location.href = url.toString();
+    } else {
+      status.textContent = 'Comando no reconocido: ' + text;
+      status.style.color = '#F59E0B';
+    }
+  };
+  r.onerror = function(e) {
+    status.textContent = 'Error: ' + e.error; status.style.color = '#EF4444';
+    btn.textContent = '&#x1F3A4; Hablar';
+    btn.style.background = 'linear-gradient(135deg,#0EA5E9,#0284C7)';
+  };
+  r.onend = function() {
+    if (btn.textContent.indexOf('Escuchando') !== -1) {
+      btn.textContent = '&#x1F3A4; Hablar';
+      btn.style.background = 'linear-gradient(135deg,#0EA5E9,#0284C7)';
+    }
+  };
+  r.start();
+}
+</script>
+""", height=60)
+ 
+# Procesar comando de voz recibido via query param
+voz_cmd = st.query_params.get("voz", "")
+if voz_cmd:
+    st.query_params.clear()
+    if voz_cmd == "encender_cocina":
+        st.session_state.kitchen_light = True
+    elif voz_cmd == "apagar_cocina":
+        st.session_state.kitchen_light = False
+    elif voz_cmd == "abrir_puerta":
+        st.session_state.door_open = True
+    elif voz_cmd == "cerrar_puerta":
+        st.session_state.door_open = False
+        st.session_state.recognized_person = ""
+    st.rerun()
+ 
+# -- Comandos disponibles --
+st.markdown(
+    '<p style="color:#475569; font-size:0.75rem; letter-spacing:1px; text-transform:uppercase; margin-bottom:0.6rem;">Comandos de voz disponibles:</p>'
+    '<div style="display:grid; grid-template-columns:repeat(2,1fr); gap:0.5rem; margin-bottom:1rem;">'
+    '<div style="background:#112240; border:1px solid #1E3A5F; border-radius:10px; padding:0.5rem 0.8rem; font-size:0.8rem; color:#94A3B8;">'
+    '&#x1F4A1; "encender cocina"</div>'
+    '<div style="background:#112240; border:1px solid #1E3A5F; border-radius:10px; padding:0.5rem 0.8rem; font-size:0.8rem; color:#94A3B8;">'
+    '&#x1F315; "apagar cocina"</div>'
+    '<div style="background:#112240; border:1px solid #1E3A5F; border-radius:10px; padding:0.5rem 0.8rem; font-size:0.8rem; color:#94A3B8;">'
+    '&#x1F6AA; "abrir puerta"</div>'
+    '<div style="background:#112240; border:1px solid #1E3A5F; border-radius:10px; padding:0.5rem 0.8rem; font-size:0.8rem; color:#94A3B8;">'
+    '&#x1F512; "cerrar puerta"</div>'
+    '</div>',
+    unsafe_allow_html=True
+)
+ 
+# -- Botones manuales como respaldo --
+st.markdown(
+    '<p style="color:#475569; font-size:0.75rem; letter-spacing:1px; text-transform:uppercase; margin-bottom:0.5rem;">O usa los botones:</p>',
     unsafe_allow_html=True
 )
  
 col1, col2, col3, col4 = st.columns(4)
  
 with col1:
-    if st.button("Abrir puerta", use_container_width=True):
+    if st.button("🚪 Abrir puerta", use_container_width=True):
         st.session_state.door_open = True
-        generar_voz("Puerta abierta.")
         st.rerun()
  
 with col2:
-    if st.button("Cerrar puerta", use_container_width=True):
+    if st.button("🔒 Cerrar puerta", use_container_width=True):
         st.session_state.door_open = False
         st.session_state.recognized_person = ""
-        generar_voz("Puerta cerrada.")
         st.rerun()
  
 with col3:
-    if st.button("Encender cocina", use_container_width=True):
+    if st.button("💡 Encender cocina", use_container_width=True):
         st.session_state.kitchen_light = True
-        generar_voz("Encendiendo la cocina.")
         st.rerun()
  
 with col4:
-    if st.button("Apagar cocina", use_container_width=True):
+    if st.button("🌑 Apagar cocina", use_container_width=True):
         st.session_state.kitchen_light = False
-        generar_voz("Apagando la cocina.")
         st.rerun()
  
 # =========================================================
@@ -468,6 +549,6 @@ with col4:
 # =========================================================
  
 st.markdown(
-    '<div class="app-footer">Python ' + platform.python_version() + ' | Smart Home AI v3.2</div>',
+    '<div class="app-footer">Python ' + platform.python_version() + ' | Smart Home AI v3.4</div>',
     unsafe_allow_html=True
 )
