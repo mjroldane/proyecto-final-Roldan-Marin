@@ -49,10 +49,26 @@ defaults = {
     "recognized_person": "",
     "model_loaded": False,
     "model_backend": "",
+    "pending_voz_cmd": "",
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
+ 
+# Procesar comando de voz pendiente ANTES de renderizar cualquier widget
+if st.session_state.pending_voz_cmd:
+    cmd = st.session_state.pending_voz_cmd
+    st.session_state.pending_voz_cmd = ""
+    if cmd == "encender_cocina":
+        st.session_state.kitchen_light = True
+    elif cmd == "apagar_cocina":
+        st.session_state.kitchen_light = False
+    elif cmd == "abrir_puerta":
+        st.session_state.door_open = True
+    elif cmd == "cerrar_puerta":
+        st.session_state.door_open = False
+        st.session_state.recognized_person = ""
+    st.rerun()
  
 # =========================================================
 # ESTILOS CSS
@@ -389,22 +405,19 @@ st.markdown(
     unsafe_allow_html=True
 )
  
-# Campo de texto oculto que recibe el comando desde el JS
-voz_input = st.text_input("cmd", value="", key="voz_cmd_input", label_visibility="collapsed")
+# on_change guarda el valor en pending_voz_cmd sin tocar el widget directamente
+def handle_voz_input():
+    cmd = st.session_state.get("voz_cmd_input", "")
+    if cmd:
+        st.session_state.pending_voz_cmd = cmd
  
-# Procesar el comando recibido desde JS
-if voz_input:
-    if voz_input == "encender_cocina":
-        st.session_state.kitchen_light = True
-    elif voz_input == "apagar_cocina":
-        st.session_state.kitchen_light = False
-    elif voz_input == "abrir_puerta":
-        st.session_state.door_open = True
-    elif voz_input == "cerrar_puerta":
-        st.session_state.door_open = False
-        st.session_state.recognized_person = ""
-    st.session_state.voz_cmd_input = ""
-    st.rerun()
+st.text_input(
+    "cmd",
+    value="",
+    key="voz_cmd_input",
+    label_visibility="collapsed",
+    on_change=handle_voz_input
+)
  
 st.components.v1.html("""
 <style>
@@ -469,7 +482,6 @@ function hablar(texto, callback) {
   window.speechSynthesis.speak(utter);
 }
  
-// Inyecta el comando en el st.text_input de Streamlit y dispara Enter
 function ejecutarComandoStreamlit(cmd) {
   var inputs = window.parent.document.querySelectorAll('input[type="text"]');
   var targetInput = null;
@@ -494,7 +506,6 @@ function ejecutarComandoStreamlit(cmd) {
       targetInput.dispatchEvent(new KeyboardEvent('keyup',    { key: 'Enter', keyCode: 13, bubbles: true }));
     }, 100);
   } else {
-    // Fallback: query param
     var url = new URL(window.parent.location.href);
     url.searchParams.set('voz', cmd);
     window.parent.location.href = url.toString();
@@ -551,13 +562,11 @@ function startListening() {
  
     if (matched) {
       pendingCmd = matched;
-      // Intenta ejecutar automaticamente
-      ejecutarPendiente();
-      // Si falla, el boton verde queda visible como respaldo
       execBtn.textContent = '\u25B6 Ejecutar: ' + matched;
       execBtn.classList.add('visible');
       status.textContent = 'Comando: "' + matched + '" — ejecutando...';
       status.style.color = '#FCD34D';
+      ejecutarPendiente();
     } else {
       status.textContent = 'No reconoci ese comando: "' + text + '"';
       status.style.color = '#F59E0B';
@@ -627,7 +636,7 @@ with col4:
 # =========================================================
  
 st.markdown(
-    '<div class="app-footer">Python ' + platform.python_version() + ' | Smart Home AI v3.6</div>',
+    '<div class="app-footer">Python ' + platform.python_version() + ' | Smart Home AI v3.7</div>',
     unsafe_allow_html=True
 )
  
